@@ -303,6 +303,7 @@ vac_test_clean <- vac_test_clean  %>% drop_na(cod_ibge,sexo,idade,dt_coleta) %>%
   mutate(length=if_else(str_detect(vs_type2,"CV_v3_"),as.Date("2021-12-08")-d3_data_aplicacao,NULL),
          time_2nd_3rd=if_else(str_detect(vs_type2,"CV_v3_"),d3_data_aplicacao-d2_data_aplicacao,NULL))
 
+
 #Include microregion code
 regiao_imediata <- readxl::read_excel("regioes_geograficas_composicao_por_municipios_2017_20180911.xlsx")
 #convert to 6 digit ibge code
@@ -312,8 +313,69 @@ vac_test_clean <- vac_test_clean %>% left_join(regiao_imediata,by=c("cod_ibge"="
 # Check missing
 vac_test_clean %>% filter(is.na(cod_rgi)) %>% count(uf)
 #All missing are from DF- assign value of Df 530001 and convert to factor
-vac_test_clean <- vac_test_clean %>% mutate(cod_rgi=factor(if_else(is.na(cod_rgi),"vac_test_clean",cod_rgi)))
+vac_test_clean <- vac_test_clean %>% mutate(cod_rgi=factor(if_else(is.na(cod_rgi),"530001",cod_rgi)))
+vac_test_clean %>% filter(is.na(cod_rgi)) %>% count(uf)
+
+saveRDS(vac_test_clean,"db_tnd_analysis.RDS")
 
 
-saveRDS(vac_test_clean,"vac_test_clean_0812.RDS")
 
+### addendum 
+vac_test_clean <- read_rds("db_tnd_analysis.RDS")
+
+
+
+#Create new categories
+vac_test_clean <- vac_test_clean %>% mutate(days_vacc_1_test = as.numeric(dt_inicio_sintomas - d1_data_aplicacao),
+                                            days_vacc_2_test = as.numeric(dt_inicio_sintomas - d2_data_aplicacao),
+                                            days_vacc_3_test = as.numeric(dt_inicio_sintomas - d3_data_aplicacao),
+                                            vacc_status = case_when(!is.na(d3_data_aplicacao) & days_vacc_3_test>=0 & days_vacc_3_test <=6~"v3_0:6",
+                                                                    !is.na(d3_data_aplicacao) & days_vacc_3_test>=7 & days_vacc_3_test <=13~"v3_7:13",
+                                                                    !is.na(d3_data_aplicacao) & days_vacc_3_test>=14 & days_vacc_3_test <=30~"v3_14:30",
+                                                                    !is.na(d3_data_aplicacao) & days_vacc_3_test>=31~"v3_31+",
+                                                                    is.na(d2_data_aplicacao) &  days_vacc_1_test <0 ~ "uv",
+                                                                    is.na(d2_data_aplicacao) & days_vacc_1_test >=0 & days_vacc_1_test <= 6 ~ "v1_0:6",
+                                                                    is.na(d2_data_aplicacao) & days_vacc_1_test >=7 & days_vacc_1_test <= 13 ~ "v1_7:13",
+                                                                    is.na(d2_data_aplicacao) & days_vacc_1_test >=14 ~ "v1_14+",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_1_test <0 ~ "test_before_vaccination1",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test <0 ~ "test_before_vaccination2",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test >=0 & days_vacc_2_test <=13 ~ "v2_0:13",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test >=14 & days_vacc_2_test <=30 ~ "v2_14:30",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test >=31 & days_vacc_2_test <=60 ~ "v2_31:60",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test >=61 & days_vacc_2_test <=90 ~ "v2_61:90",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test >=91 & days_vacc_2_test <=120 ~ "v2_91:120",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test >=121 & days_vacc_2_test <=150 ~ "v2_121:150",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test >=151 & days_vacc_2_test <=180 ~ "v2_151:180",
+                                                                    !is.na(d2_data_aplicacao) & days_vacc_2_test >180 ~ "v2_181+"))
+
+#### People vaccinated after test- as unvaccinated
+vac_test_clean <- vac_test_clean %>% mutate(vacc_status = case_when(vacc_status == "test_before_vaccination1" ~ "uv",
+                                                                    vacc_status == "test_before_vaccination2" & days_vacc_1_test >= 0 & days_vacc_1_test <=6 ~ "v1_0:6",
+                                                                    vacc_status == "test_before_vaccination2" & days_vacc_1_test >= 7 & days_vacc_1_test <=13 ~ "v1_7:13",
+                                                                    vacc_status == "test_before_vaccination2" & days_vacc_1_test >=14 ~ "v1_14+",
+                                                                    TRUE ~ vacc_status))
+#Add vaccine type 
+vac_test_clean <- vac_test_clean %>% mutate(vs_type = paste(d1_nome_vacina, vacc_status, sep="_"))
+
+#Assign the AZ_uv, CV_uv, BNT162b2_uv and uv_uv to unvaccinated \ Remove Janssen with second dose (inconsistent) 
+vac_test_clean <- vac_test_clean %>% mutate(vs_type = case_when(vs_type == "Ad26_uv" ~ "uv",
+                                                                vs_type == "CV_uv" ~ "uv",
+                                                                vs_type == "BNT162b2_uv" ~ "uv",
+                                                                vs_type == "AZ_uv" ~ "uv",
+                                                                vs_type == "uv_NA" ~ "uv",
+                                                                TRUE ~ vs_type),
+                                            vs_type=fct_relevel(factor(vs_type),"uv")) %>% filter(!str_detect(as.character(vs_type),"Ad26_v2")) %>% droplevels()
+
+vac_test_clean <- vac_test_clean %>% mutate(vacc_3_type=case_when(
+  str_detect(vacc_status,"v3_")~ paste(d1_nome_vacina,d3_nome_vacina,sep = "-")))
+
+vac_test_clean <- vac_test_clean  %>% drop_na(cod_ibge,sexo,idade,dt_coleta) %>% mutate(vs_type2=case_when(
+                                                                                          str_detect(vs_type,"v3_")~paste(vs_type,d3_nome_vacina, sep="_"),
+                                                                                          TRUE~as.character(vs_type)
+                                                                                        ))%>% mutate(length=if_else(str_detect(vs_type2,"CV_v3_"),as.Date("2021-11-11")-d3_data_aplicacao,NULL),
+         time_2nd_3rd=if_else(str_detect(vs_type2,"CV_v3_"),d3_data_aplicacao-d2_data_aplicacao,NULL),
+         vs_type2=fct_relevel(vs_type2,"uv"))
+
+saveRDS(vac_test_clean,"db_tnd_analysis_rev.RDS")
+
+View = function(x) { utils::View(x)} #make possible to cancel view command

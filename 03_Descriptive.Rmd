@@ -9,27 +9,92 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 setwd("/dados/Analysis/Thiago/Scripts/CoronaVac-Waning/TND")
 pacman::p_load(tidyverse,tidylog,tidytable,tableone,gtsummary,rms,patchwork)
+source("ggplot_theme_Publication.R")
+
 ```
 
 
 ```{r cars}
-source("ggplot_theme_Publication.R")
-vacc <- ("/dados/Analysis/Thiago/DB_processed/db_vacine111121/")
+vacc <- data.table::rbindlist(lapply(Sys.glob("/dados/Analysis/Thiago/DB_processed/db_vacine111121/part-*.parquet"), arrow::read_parquet))
 vacc <- vacc %>% mutate(flag_incon=case_when(
   d2_data_aplicacao-d1_data_aplicacao<13~1L,
   d1_data_aplicacao<"2021-01-18"~1L,
   !is.na(d2_nome_vacina )& d2_nome_vacina!=d1_nome_vacina~1L,
+  d_idade<12~1L,
   TRUE~0L
 ))
-
-vacc_clean <- vacc %>% filter(flag_incon==0, d_idade>11)
+vacc_clean <- vacc %>% filter(flag_incon==0)
 
 ```
 
 
+# Distribution
+```{r}
+#main analysis
+
+datebreaks <- seq(as.Date("2021-01-01"), as.Date("2021-11-12"), by = "1 month")
+plot_case_control <- vac_test_rt_pcr %>% ggplot(aes(dt_coleta, fill = confirmado)) +
+  geom_histogram(binwidth = 7, color = "white", alpha = 0.7, size = 0.25) +
+  scale_fill_manual(values = c("Confirmado" = "firebrick2", "Negativo" = "deepskyblue"), labels = c("Cases", "Controls")) +
+  labs(y = "Suspected cases by week", x = "Sample collection date", fill = "") +
+  scale_y_continuous(labels = scales::comma, limits = c(0, 4e5), breaks = seq(0, 4e5, 1e5)) +
+  scale_x_date(breaks = datebreaks, date_labels = "%b\n%Y ", limits = c(as.Date("2021-01-01"), as.Date("2021-11-12"))) +
+  theme_Publication() +
+  theme(legend.position = "bottom")
+
+plot_case_control
+```
+
+
+# CC
+```{r}
+
+plot_cc <- vac_test_rt_pcr %>%
+  mutate(vs_type3 = case_when(
+    str_detect(vs_type2, "CV_") ~ "CoronaVac",
+    vs_type2 == "uv" ~ "Unvaccinated",
+    TRUE ~ "Other Vaccines"
+  )) %>%
+  ggplot(aes(dt_coleta, fill = vs_type3)) +
+  geom_histogram(binwidth = 7, color = "white", alpha = 0.7, size = 0.25) +
+  labs(y = "Counts", x = "Sample collection date", fill = "") +
+  scale_fill_manual(values = c("CoronaVac" = "forestgreen", "Other Vaccines" = "deepskyblue2", "Unvaccinated" = "firebrick2")) +
+  scale_y_continuous(labels = scales::comma, limits = c(0, 2e5), breaks = seq(0, 2e5, .5e5)) +
+  scale_x_date(breaks = datebreaks, date_labels = "%b\n%Y ", limits = c(as.Date("2021-01-01"), as.Date("2021-11-12"))) +
+  theme(legend.position = "bottom") +
+  theme_Publication() +
+  theme(legend.position = "bottom", panel.spacing.x = unit(2, "lines")) +
+  facet_wrap(~confirmado, labeller = as_labeller(c("Negativo" = "Controls", "Confirmado" = "Cases")))
+
+plot_cc
+```
+
+
+# CC - Antigen/RT-PCR
+```{r}
+plot_cc_ag <- vac_test %>%
+  mutate(vs_type3 = case_when(
+    str_detect(vs_type2, "CV_") ~ "CoronaVac",
+    vs_type2 == "uv" ~ "Unvaccinated",
+    TRUE ~ "Other Vaccines"
+  )) %>%
+  ggplot(aes(dt_coleta, fill = vs_type3)) +
+  geom_histogram(binwidth = 7, color = "white", alpha = 0.7, size = 0.25) +
+  labs(y = "Counts", x = "Sample collection date", fill = "") +
+  scale_fill_manual(values = c("CoronaVac" = "forestgreen", "Other Vaccines" = "deepskyblue2", "Unvaccinated" = "firebrick2")) +
+  scale_y_continuous(labels = scales::comma, limits = c(0, 4e5), breaks = seq(0, 4e5, 1e5)) +
+  scale_x_date(breaks = datebreaks, date_labels = "%b\n%Y ", limits = c(as.Date("2021-01-01"), as.Date("2021-11-12"))) +
+  theme(legend.position = "bottom") +
+  theme_Publication() +
+  theme(legend.position = "bottom", panel.spacing.x = unit(2, "lines")) +
+  facet_wrap(~confirmado, labeller = as_labeller(c("Negativo" = "Controls", "Confirmado" = "Cases")))
+
+plot_cc_ag
+```
+
 
 ```{r plot_vaccine_uptake, echo=FALSE}
-first_dose_g <- vacc_clean %>% filter(!is.na(d1_data_aplicacao),d1_data_aplicacao>"2021-01-17",d1_data_aplicacao<"2021-12-10")%>%mutate(
+first_dose_g <- vacc_clean %>% filter(!is.na(d1_data_aplicacao),d1_data_aplicacao>"2021-01-17",d1_data_aplicacao<"2021-11-12")%>%mutate(
     faixa_etaria = case_when( 
       d_idade <18~"12-17",
       d_idade <60 ~ "18-59",
@@ -47,9 +112,9 @@ first_dose_g <- vacc_clean %>% filter(!is.na(d1_data_aplicacao),d1_data_aplicaca
   faixa_etaria=="12-17"~cobertura_por_dia_cumu/18092894,
   faixa_etaria=="18-59"~cobertura_por_dia_cumu/128714674,
   faixa_etaria=="60-79"~cobertura_por_dia_cumu/26712827,
-  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d1_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent)+ theme_Publication()+labs(x="Month",y="Cumulative uptake %",color="Age Group", title = "1st dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
+  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d1_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent)+ theme_Publication()+labs(x="",y="Cumulative uptake %",color="Age Group", title = "First dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
 
-second_dose_g <- vacc_clean %>% filter(!is.na(d2_data_aplicacao),d2_data_aplicacao>"2021-02-01",d2_data_aplicacao<"2021-12-12")%>%mutate(
+second_dose_g <- vacc_clean %>% filter(!is.na(d2_data_aplicacao),d2_data_aplicacao>"2021-02-01",d2_data_aplicacao<"2021-11-12")%>%mutate(
     faixa_etaria = case_when( 
       d_idade <18~"12-17",
       d_idade <60 ~ "18-59",
@@ -67,9 +132,9 @@ second_dose_g <- vacc_clean %>% filter(!is.na(d2_data_aplicacao),d2_data_aplicac
   faixa_etaria=="12-17"~cobertura_por_dia_cumu/18092894,
   faixa_etaria=="18-59"~cobertura_por_dia_cumu/128714674,
   faixa_etaria=="60-79"~cobertura_por_dia_cumu/26712827,
-  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d2_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="Month",y="",color="Age Group", title = "2nd dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
+  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d2_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="",y="",color="Age Group", title = "Second dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
 
-third_dose_g <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_aplicacao>"2021-08-01",d3_data_aplicacao<"2021-12-12")%>%mutate(
+third_dose_g <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_aplicacao>"2021-08-01",d3_data_aplicacao<"2021-11-12")%>%mutate(
     faixa_etaria = case_when( 
       d_idade <18~"12-17",
       d_idade <60 ~ "18-59",
@@ -87,10 +152,10 @@ third_dose_g <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_aplicaca
   faixa_etaria=="12-17"~cobertura_por_dia_cumu/18092894,
   faixa_etaria=="18-59"~cobertura_por_dia_cumu/128714674,
   faixa_etaria=="60-79"~cobertura_por_dia_cumu/26712827,
-  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d3_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="Month",y="",color="Age Group", title = "3rd dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
+  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d3_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="",y="",color="Age Group", title = "Booster dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
 
 
-first_dose_corona <- vacc_clean %>% filter(!is.na(d1_data_aplicacao),d1_data_aplicacao>"2021-01-17",d1_data_aplicacao<"2021-12-12",d1_nome_vacina=="Covid-19-Coronavac-Sinovac/Butantan")%>%mutate(
+first_dose_corona <- vacc_clean %>% filter(!is.na(d1_data_aplicacao),d1_data_aplicacao>"2021-01-17",d1_data_aplicacao<"2021-11-12",d1_nome_vacina=="CoronaVac")%>%mutate(
     faixa_etaria = case_when( 
       d_idade <18~"12-17",
       d_idade <60 ~ "18-59",
@@ -108,9 +173,9 @@ first_dose_corona <- vacc_clean %>% filter(!is.na(d1_data_aplicacao),d1_data_apl
   faixa_etaria=="12-17"~cobertura_por_dia_cumu/18092894,
   faixa_etaria=="18-59"~cobertura_por_dia_cumu/128714674,
   faixa_etaria=="60-79"~cobertura_por_dia_cumu/26712827,
-  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d1_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="Month",y="Cumulative uptake %",color="Age Group", title = "1st dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
+  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d1_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="",y="Cumulative uptake %",color="Age Group", title = "First dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
 
-second_dose_corona <- vacc_clean %>% filter(!is.na(d2_data_aplicacao),d2_data_aplicacao>"2021-02-01",d2_data_aplicacao<"2021-12-12",d1_nome_vacina=="Covid-19-Coronavac-Sinovac/Butantan")%>%mutate(
+second_dose_corona <- vacc_clean %>% filter(!is.na(d2_data_aplicacao),d2_data_aplicacao>"2021-02-01",d2_data_aplicacao<"2021-11-12",d1_nome_vacina=="CoronaVac")%>%mutate(
     faixa_etaria = case_when( 
       d_idade <18~"12-17",
       d_idade <60 ~ "18-59",
@@ -128,9 +193,9 @@ second_dose_corona <- vacc_clean %>% filter(!is.na(d2_data_aplicacao),d2_data_ap
   faixa_etaria=="12-17"~cobertura_por_dia_cumu/18092894,
   faixa_etaria=="18-59"~cobertura_por_dia_cumu/128714674,
   faixa_etaria=="60-79"~cobertura_por_dia_cumu/26712827,
-  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d2_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="Month",y="",color="Age Group", title = "2nd dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
+  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d2_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="",y="",color="Age Group", title = "Second dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
 
-third_dose_corona <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_aplicacao>"2021-08-01",d3_data_aplicacao<"2021-12-12",d1_nome_vacina=="Covid-19-Coronavac-Sinovac/Butantan")%>%mutate(
+third_dose_corona <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_aplicacao>"2021-08-01",d3_data_aplicacao<"2021-11-12",d1_nome_vacina=="CoronaVac")%>%mutate(
     faixa_etaria = case_when( 
       d_idade <18~"12-17",
       d_idade <60 ~ "18-59",
@@ -148,11 +213,13 @@ third_dose_corona <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_apl
   faixa_etaria=="12-17"~cobertura_por_dia_cumu/18092894,
   faixa_etaria=="18-59"~cobertura_por_dia_cumu/128714674,
   faixa_etaria=="60-79"~cobertura_por_dia_cumu/26712827,
-  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d3_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="Month",y="",color="Age Group", title = "3rd dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
+  faixa_etaria=="80+"~cobertura_por_dia_cumu/4617408))%>% ggplot(aes(d3_data_aplicacao,cobertura_perc_cum,color=faixa_etaria))+geom_line(size=1, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%B")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="",y="",color="Age Group", title = "Booster dose")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))+ggsci::scale_color_lancet()
 
 
+first_dose_g+second_dose_g+third_dose_g+first_dose_corona+second_dose_corona+third_dose_corona+ plot_layout(guides = "collect") & theme(legend.position = 'bottom') &plot_annotation(tag_levels = "A")&scale_x_date(limits = c(as.Date("2021-01-01"),as.Date("2021-11-12")),breaks = "1 month",date_labels = "%b/%Y")
+second_dose_g+labs(title = "Second dose")
 
-type_graph <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_aplicacao>"2021-08-01",d3_data_aplicacao<"2021-12-12",d1_nome_vacina=="Covid-19-Coronavac-Sinovac/Butantan")%>% mutate(d1_nome_vacina=case_when(
+type_graph <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_aplicacao>"2021-08-01",d3_data_aplicacao<"2021-11-11",d1_nome_vacina=="Covid-19-Coronavac-Sinovac/Butantan")%>% mutate(d1_nome_vacina=case_when(
   d1_nome_vacina=="Covid-19-AstraZeneca"~"AZ",
   d1_nome_vacina=="Covid-19-Coronavac-Sinovac/Butantan"~"CV",
   d1_nome_vacina=="Vacina covid-19 - Ad26.COV2.S - Janssen-Cilag"~"Ad26",
@@ -182,15 +249,27 @@ type_graph <- vacc_clean %>% filter(!is.na(d3_data_aplicacao),d3_data_aplicacao>
     cobertura_por_dia_cumu =
       cumsum(vacinacao_por_terceira)
   )%>% mutate(cobertura_perc_cum=case_when(
-  comb_3rddose=="CVAZ"~cobertura_por_dia_cumu/12385633, #Total
-  comb_3rddose=="CVCV"~cobertura_por_dia_cumu/12385633,
-  comb_3rddose=="CVAd26"~cobertura_por_dia_cumu/12385633,
-  comb_3rddose=="CVBNT162b2"~cobertura_por_dia_cumu/12385633),
+  comb_3rddose=="CVAZ"~cobertura_por_dia_cumu/9395171, #Total
+  comb_3rddose=="CVCV"~cobertura_por_dia_cumu/9395171,
+  comb_3rddose=="CVAd26"~cobertura_por_dia_cumu/9395171,
+  comb_3rddose=="CVBNT162b2"~cobertura_por_dia_cumu/9395171),
   comb_3rddose=case_when(comb_3rddose=="CVCV"~"CoronaVac",
                           comb_3rddose=="CVAZ"~"ChAdOx1",
                           comb_3rddose=="CVAd26"~"Ad26.COV2.S",
-                          comb_3rddose=="CVBNT162b2"~"BNT162b2"))  %>% complete(nesting(comb_3rddose), d3_data_aplicacao = seq(min(d3_data_aplicacao), as.Date("2021-12-12"), by = "day")) %>%  arrange(d3_data_aplicacao, comb_3rddose) %>%
-  fill(cobertura_perc_cum, .direction = "down") %>% ggplot(aes(d3_data_aplicacao,cobertura_perc_cum,fill=comb_3rddose))+geom_area(size=0.2, alpha=0.8)+scale_x_date(breaks = "1 month",date_labels = "%b/%Y")+scale_y_continuous(labels=scales::percent, limits = c(0,1))+ theme_Publication()+labs(x="",y="% of 3rd doses \nby vaccine",fill="Vaccine:", title = "Fully vaccinated with CoronaVac")+theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+                          comb_3rddose=="CVBNT162b2"~"BNT162b2"))  %>% complete(nesting(comb_3rddose), d3_data_aplicacao = seq(min(d3_data_aplicacao), as.Date("2021-11-11"), by = "day")) %>%  arrange(d3_data_aplicacao, comb_3rddose) %>%
+  fill(cobertura_perc_cum, .direction = "down") 
+
+
+type_graph %>% ggplot(aes(d3_data_aplicacao, cobertura_perc_cum, fill = factor(comb_3rddose, levels = c("Ad26.COV2.S", "ChAdOx1", "BNT162b2","CoronaVac")))) +
+  geom_area(size = 0.2, alpha = 0.8) +
+  scale_x_date(breaks = "1 month", date_labels = "%b/%Y") +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1)) +
+  theme_Publication() +
+  labs(x = "", y = "% of Booster doses \nby vaccine", fill = "Vaccine:", title = "Fully vaccinated with CoronaVac") +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5)) +
+  scale_fill_manual(values = c("Ad26.COV2.S" = "black", "BNT162b2" = "deepskyblue3","ChAdOx1"="orange","CoronaVac" = "forestgreen"))
+
+
 
 
 
@@ -326,6 +405,7 @@ plot2 <- vacc_clean %>% filter(d2_nome_vacina!="Ad26.COV2.S" | is.na(d2_nome_vac
 
 
 library(egg)
+
 tag_facet_outside(plot1)
 
 top_labels <- c("First dose","Second dose")
@@ -343,16 +423,42 @@ vaccination <- plot2+geom_area(color="black", alpha=0.6)+labs(fill="Vaccine")+gg
 
 
 ```{r}
-vac_test_infection %>% filter(!duplicated(id_vigvac)) %>% filter(d1_nome_vacina=="CV", time_2nd_3rd>100) %>%  ggplot(aes(time_2nd_3rd))+geom_histogram(binwidth = 7)+scale_x_continuous(limits = c(0,300), breaks=seq(0,300,50))+labs(x="Interval between second dose of CoronaVac\nand booster dose (days)", y="Number of people")+theme_Publication()
 
 
-vac_test_infection %>%mutate(
-    age_group = case_when(
-      idade < 60 ~ "18-59",
-      idade < 80 ~ "60-79",
-      idade > 79 ~ "80+"
-    )) %>%  filter(!duplicated(id_vigvac)) %>% filter(vs_type2=="CV_v3_14+BNT162b2", length<120) %>%  ggplot(aes(length))+geom_histogram(bins = 8)+scale_y_continuous(limits = c(0,2000), breaks=seq(0,2000,500)) +scale_x_continuous(limits = c(0,80), breaks=seq(0,80,10))+labs(x="Time of follow-up after Booster with BN162b2(days)", y="Number of people")+facet_wrap(~age_group)
-+theme_Publication()
+death %>%
+  filter(srag_dt_evoluca > "2020-01-11", srag_dt_evoluca < "2021-11-12") %>%
+  ggplot(aes(srag_dt_evoluca)) +
+  geom_histogram(binwidth = 7, alpha=0.75,size=.25,color="white") +
+  theme_Publication() +
+  scale_x_date(breaks = datebreaks, date_labels = "%b\n%Y", limits = c(as.Date("2020-02-01"), as.Date("2021-11-11"))) +
+  theme(axis.text.x = element_text(angle = 0, vjust = .25), legend.position = "bottom") +
+  labs(x = "Date of death", y = "Number of COVID-19 deaths\n by week") +
+  scale_y_continuous(labels = scales::comma, limits = c(0, 1.5e4), breaks = seq(0, 1.5e4, .5e4))
+
+
+vac_test_rt_pcr %>%
+  filter(!duplicated(id_vigvac)) %>%
+  filter(d1_nome_vacina == "CV", time_2nd_3rd > 90) %>%
+  ggplot(aes(time_2nd_3rd)) +
+  geom_histogram(binwidth = 7, alpha=0.75,size=.25,color="white") +
+  scale_x_continuous(limits = c(0, 300), breaks = seq(0, 300, 50)) +
+  labs(x = "Interval between second dose of CoronaVac\nand booster dose (days)", y = "Number of people") +
+  theme_Publication()
+
+
+
+
+vac_test_rt_pcr %>%
+  filter(!duplicated(id_vigvac)) %>%
+  filter(str_detect(vs_type2,"CV_v3"),str_detect(vs_type2,"BNT")) %>%
+  ggplot(aes(days_vacc_3_test, fill=idade_cat)) +
+  geom_bar(alpha=0.75,size=.25,color="white") +
+  scale_y_continuous(limits = c(0, 400), breaks = seq(0, 400, 50)) +
+  scale_x_continuous(limits = c(0, 60), breaks = seq(0, 60, 15)) +
+  expand_limits(x=0)+
+  ggsci::scale_fill_npg(limits = rev(levels(vac_test_rt_pcr$idade_cat)))+
+  labs(x = "Time between Booster with BN162b2 and sympton onset (days)", y = "Number of people", fill="Age group") +
+  theme_Publication()+guides(fill=guide_legend(reverse = TRUE))
 
 ```
 
@@ -395,29 +501,60 @@ figure_1 %>% mutate(term=fct_recode(term,"Booster\n w/ BNT162b2"="BNT162b2",
 
 
 ```{r}
-lab.data <- read_rds("data/tnd0812.RDS")
+lab_data <- data.table::rbindlist(lapply(Sys.glob("/dados/Analysis/Thiago/DB_processed/tnd_processed111121/part-*.parquet"), arrow::read_parquet))
 
-# Filter inconsistencies and notifications before covid-19 pandemic - removed 81,513 rows
-lab.data <- lab.data %>% filter(dt_notificacao<dt_inicio_sintomas)
+lab_data <- lab_data %>% mutate(
+  dt_coleta = case_when(
+    is.na(dt_coleta) & confirmado == "Confirmado" ~ dt_notificacao,
+    TRUE ~ dt_coleta
+  ),
+  dt_inicio_sintomas = if_else(is.na(dt_inicio_sintomas), dt_coleta, dt_inicio_sintomas)
+)
+lab_data <- lab_data %>% filter(dt_notificacao>"2020-02-24", dt_notificacao+14>=dt_inicio_sintomas)
 
-infection <- lab.data %>% filter(!duplicated(paste0(id_vigvac,dt_coleta,confirmado)))
+infection <- lab_data %>% filter(!duplicated(paste0(id_vigvac,dt_coleta,confirmado)))
 
 
 datebreaks <- seq(as.Date("2020-02-01"), as.Date("2021-11-11"), by="3 month")
 
-infection_plot <- infection %>% filter(confirmado=="Confirmado") %>%  ggplot(aes(dt_inicio_sintomas))+ geom_histogram(binwidth = 7, fill="goldenrod3", alpha=0.7,color="black")+theme_Publication()+scale_x_date(breaks = datebreaks,date_labels = "%b\n%Y ",limits=c(as.Date("2020-02-01"),as.Date("2021-11-12")))+theme(axis.text.x = element_text(angle=0, vjust = .25), legend.position = "bottom")+ labs(x="Date of symptom onset",y="Weekly\nCOVID-19 cases",fill="")+scale_y_continuous(labels = scales::comma, limits = c(0,4e5), breaks=seq(0,4e5,1e5))
+infection %>%
+  filter(confirmado == "Confirmado") %>%
+  ggplot(aes(dt_inicio_sintomas)) +
+  geom_histogram(binwidth = 7, alpha=0.75,size=.25,color="white") +
+  theme_Publication() +
+  scale_x_date(breaks = datebreaks, date_labels = "%b\n%Y", limits = c(as.Date("2020-02-01"), as.Date("2021-11-12"))) +
+  theme(axis.text.x = element_text(angle = 0, vjust = .25), legend.position = "bottom") +
+  labs(x = "Date of symptom onset", y = "SARS-CoV-2 Infection\n by week", fill = "") +
+  scale_y_continuous(labels = scales::comma, limits = c(0, 4e5), breaks = seq(0, 4e5, 1e5))
+
+hospitalization <- lab_data %>% arrange(srag_dt_interna) %>%  filter(!duplicated(paste0(id_vigvac,srag_dt_interna,confirmado)))
+
+hospitalization %>%
+  filter(!is.na(srag_dt_interna), confirmado == "Confirmado", srag_dt_interna > "2020-01-11", srag_dt_interna < "2021-11-11") %>%
+  ggplot(aes(srag_dt_interna)) +
+  geom_histogram(binwidth = 7, alpha=0.75,size=.25,color="white") +
+  theme_Publication() +
+  scale_x_date(breaks = datebreaks, date_labels = "%b\n%Y", limits = c(as.Date("2020-02-01"), as.Date("2021-11-12"))) +
+  theme(axis.text.x = element_text(angle = 0, vjust = .25), legend.position = "bottom") +
+  labs(x = "Date of admission", y = "Number of COVID-19 hospitalizations\n by week") +
+  scale_y_continuous(labels = scales::comma, limits = c(0, 4e4), breaks = seq(0, 4e4, 1e4))
 
 
-hospitalization <- lab.data %>% arrange(srag_dt_interna) %>%  filter(!duplicated(paste0(id_vigvac,srag_dt_interna,confirmado)))%>%  filter(confirmado=="Confirmado" & srag_hospital=="1")
-
-hospitalization %>% filter(!is.na(srag_dt_interna),confirmado=="Confirmado",srag_dt_interna>"2020-01-11", srag_dt_interna<"2021-11-11")%>% ggplot(aes(srag_dt_interna))+ geom_histogram(binwidth = 7)+theme_Publication()+scale_x_date(breaks = datebreaks,date_labels = "%B/%Y ",limits=c(as.Date("2020-02-01"),as.Date("2021-11-12")))+theme(axis.text.x = element_text(angle=90, vjust = .25), legend.position = "bottom")+labs(x="Date of admission", y= "Number of hospitalizations")+scale_y_continuous(labels = scales::comma, limits = c(0,4e4), breaks=seq(0,4e4,1e4))
+death <- lab_data %>% arrange(srag_dt_evoluca) %>%  filter(!duplicated(paste0(id_vigvac,srag_dt_interna,confirmado))) %>% filter(confirmado=="Confirmado" & srag_evolucao %in% c(2,3))
 
 
-death <- lab.data %>% arrange(srag_dt_evoluca) %>%  filter(confirmado=="Confirmado" & srag_evolucao %in% c(2,3))
+death %>%
+  filter(srag_dt_evoluca > "2020-01-11", srag_dt_evoluca < "2021-11-12") %>%
+  ggplot(aes(srag_dt_evoluca)) +
+  geom_histogram(binwidth = 7, alpha=0.75,size=.25,color="white") +
+  theme_Publication() +
+  scale_x_date(breaks = datebreaks, date_labels = "%b\n%Y", limits = c(as.Date("2020-02-01"), as.Date("2021-11-11"))) +
+  theme(axis.text.x = element_text(angle = 0, vjust = .25), legend.position = "bottom") +
+  labs(x = "Date of death", y = "Number of COVID-19 deaths\n by week") +
+  scale_y_continuous(labels = scales::comma, limits = c(0, 1.5e4), breaks = seq(0, 1.5e4, .5e4))
 
 
-death %>% filter(!is.na(srag_dt_interna),confirmado=="Confirmado",srag_dt_evoluca>"2020-01-11", srag_dt_evoluca<"2021-11-11")%>% ggplot(aes(srag_dt_evoluca))+ geom_histogram(binwidth = 7)+theme_Publication()+scale_x_date(breaks = datebreaks,date_labels = "%B/%Y ",limits=c(as.Date("2020-02-01"),as.Date("2021-11-11")))+theme(axis.text.x = element_text(angle=90, vjust = .25), legend.position = "bottom")+labs(x="Date of death", y= "Number of deaths")+scale_y_continuous(labels = scales::comma, limits = c(0,1.5e4), breaks=seq(0,1.5e4,.5e4))
-
+# Severe outcome
 
 only_death <- anti_join(death,hospitalization,by="id_vigvac")
 
@@ -426,14 +563,16 @@ severe_outcomes <- bind_rows(only_death,hospitalization) %>% select(id_vigvac,co
 severe_plot <- severe_outcomes %>% filter(!is.na(data_severe),confirmado=="Confirmado",data_severe>"2020-02-11", data_severe<"2021-11-11")%>% ggplot(aes(data_severe))+ geom_histogram(binwidth = 7, fill="darkred", alpha=0.7,color="black")+theme_Publication()+scale_x_date(breaks = datebreaks,date_labels = "%b\n%Y ",limits=c(as.Date("2020-02-01"),as.Date("2021-11-11")))+theme(axis.text.x = element_text(angle=0, vjust = .25), legend.position = "bottom")+labs(x="Date of hospitalization or death", y= "Weekly\nhospitalization or death")+scale_y_continuous(labels = scales::comma, limits = c(0,4e4), breaks=seq(0,4e4,1e4))
 
 
-plot11 <- plot1+geom_area(color="black", alpha=0.6)+labs(y="Rollout %\nFirst dose", fill="Vaccine")+ggsci::scale_fill_jama()+scale_x_date(breaks = datebreaks,date_labels = "%b\n%Y ",limits=c(as.Date("2020-02-01"),as.Date("2021-11-11")))+ theme(axis.text.x = element_text(angle=0, vjust=0.4))
+severe_outcomes %>%
+  filter(data_severe > "2020-01-11", srag_dt_evoluca < "2021-11-12") %>%
+  ggplot(aes(data_severe)) +
+  geom_histogram(binwidth = 7, alpha=0.75,size=.25,color="white") +
+  theme_Publication() +
+  scale_x_date(breaks = datebreaks, date_labels = "%b\n%Y", limits = c(as.Date("2020-02-01"), as.Date("2021-11-11"))) +
+  theme(axis.text.x = element_text(angle = 0, vjust = .25), legend.position = "bottom") +
+  labs(x = "Date of hospitalization or death", y = "Number of COVID-19 hospitalizations or deaths\n by week") +
+  scale_y_continuous(labels = scales::comma, limits = c(0, 4e4), breaks = seq(0, 4e4, 1e4))
 
-plot12 <- plot2+geom_area(color="black", alpha=0.6)+labs(y="Rollout %\nSecond dose",fill="Vaccine")+ggsci::scale_fill_jama()+scale_x_date(breaks = datebreaks,date_labels = "%b\n%Y ",limits=c(as.Date("2020-02-01"),as.Date("2021-11-11")))+ theme(legend.position = "none", axis.text.x = element_text(angle=0, vjust=0.4),)
-
-
-
-
-#infection_plot / severe_plot /plot11/plot12/variant+ plot_layout(guides = 'collect') & theme(axis.title.y = element_text(size=8),legend.position = 'bottom',axis.text.x = element_text(angle=0)) 
 
 ```
 
@@ -452,7 +591,7 @@ vacc %>% filter(!is.na(d1_data_aplicacao),d1_data_aplicacao>"2021-01-17",d1_data
 ```{r}
 
 teste <- as.Date(voc$periodo, format = "%b %Y")
-voc <-readxl::read_excel("variant_nov.xlsx")
+voc <-readxl::read_excel("Data.xlsx")
 voc <- janitor::clean_names(voc)
 voc_jul <- voc %>%
   mutate(
@@ -465,8 +604,6 @@ voc_jul <- voc %>%
   mutate(variante = fct_lump(variante, 3, w = quantidade)) %>%
   mutate(
     periodo = fct_recode(factor(periodo),
-                         "Nov/2020" = "Nov 2020",
-                         "Dec/2020" = "Dez 2020",
                          "Jan/2021" = "Jan 2021",
                          "Feb/2021" = "Fev 2021",
                          "Mar/2021" = "Mar 2021",
@@ -489,13 +626,13 @@ voc_jul <- voc %>%
                                             "Centro-oeste" = "Central West"),
                periodo=lubridate::my(periodo)) 
 
-
-variant <- voc_jul %>% mutate(periodo=periodo+15) %>% 
-    group_by(periodo) %>%
+datebreaks <- seq(as.Date("2021-01-01"), as.Date("2021-11-12"), by="1 month")
+voc_jul %>% mutate(periodo=periodo) %>% 
+    group_by(periodo,regiao) %>%
     count(variante,wt=quantidade) %>%
     mutate(percentualnogrupo =(n / sum(n))) %>%
     ggplot(aes(periodo, y = percentualnogrupo, fill = variante)) +geom_col()+theme_minimal()+ggsci::scale_fill_lancet()+scale_y_continuous(labels = scales::percent)+
-  labs(x="", y="% Variant", fill="Variant")+theme(axis.text.x = element_text(angle=0, vjust=0.4), legend.position = "bottom")+scale_x_date(breaks = datebreaks,date_labels = "%b\n%Y ",limits=c(as.Date("2020-02-01"),as.Date("2021-12-11")))+theme_Publication()
+  labs(x="", y="% Variant", fill="Variant")+theme_Publication()+theme(axis.text.x = element_text(angle=90, vjust=.5), legend.position = "bottom")+scale_x_date(breaks = datebreaks,date_labels = "%b/%Y ",limits=c(as.Date("2020-12-10"),as.Date("2021-11-15")))+facet_wrap(~regiao,nrow=1)
 
 ```
 
